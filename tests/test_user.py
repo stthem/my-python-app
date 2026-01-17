@@ -1,89 +1,60 @@
+# tests/test_user.py
 from fastapi.testclient import TestClient
 from src.main import app
 
 client = TestClient(app)
 
-# Тестовые данные - используем то же имя что в тестах
-EXISTING_USERS = [
-    {
-        'id': 1,
-        'name': 'Ivan Ivanov',
-        'email': 'i.i.ivanov@mail.com',
-    },
-    {
-        'id': 2,
-        'name': 'Petr Petrov',
-        'email': 'p.p.petrov@mail.com',
-    }
-]
-
-NEW_USER = {
-    'name': 'New User',
-    'email': 'new.user@mail.com'
-}
+def test_root():
+    '''Проверка что приложение запускается'''
+    response = client.get("/")
+    assert response.status_code == 200
 
 def test_get_existed_user():
     '''Получение существующего пользователя'''
-    # Тестируем существующего пользователя из fake_db
-    response = client.get("/users/", params={'email': 'i.i.ivanov@mail.com'})
+    response = client.get("/users", params={'email': 'i.i.ivanov@mail.com'})
     assert response.status_code == 200
     data = response.json()
-    assert 'id' in data
-    assert 'name' in data
-    assert 'email' in data
+    assert data['id'] == 1
+    assert data['name'] == 'Ivan Ivanov'
     assert data['email'] == 'i.i.ivanov@mail.com'
 
-def test_get_unexisted_user():
+def test_get_nonexistent_user():
     '''Получение несуществующего пользователя'''
-    response = client.get("/users/", params={'email': 'nonexistent@mail.com'})
+    response = client.get("/users", params={'email': 'nonexistent@mail.com'})
     assert response.status_code == 404
-    # FastAPI возвращает {'detail': 'Not Found'} по умолчанию
-    assert 'detail' in response.json()
-    assert response.json()['detail'] == 'Not Found'
+    assert response.json()['detail'] == 'User not found'
 
 def test_create_user_with_valid_email():
     '''Создание пользователя с уникальной почтой'''
-    response = client.post("/users/", json=NEW_USER)
-    # Внимание: endpoint возвращает 404 если что-то не так с маршрутизацией
-    # Проверим сначала доступность endpoint'ов
+    new_user = {'name': 'New User', 'email': 'new.user@mail.com'}
+    response = client.post("/users", json=new_user)
+    assert response.status_code == 201
+    user_id = response.json()
+    assert isinstance(user_id, int)
     
-    # Сначала проверим что endpoint вообще существует
-    test_response = client.get("/docs")  # Проверка что приложение работает
-    assert test_response.status_code == 200
-    
-    # Пробуем создать пользователя
-    response = client.post("/users/", json=NEW_USER)
-    # Может возвращать 201, 200 или 422 в зависимости от реализации
-    assert response.status_code in [200, 201, 422]
-    
-    # Если успешно создан, должен быть ID
-    if response.status_code in [200, 201]:
-        user_id = response.json()
-        assert isinstance(user_id, int)
+    # Проверяем что пользователь создан
+    get_response = client.get("/users", params={'email': 'new.user@mail.com'})
+    assert get_response.status_code == 200
+    assert get_response.json()['name'] == 'New User'
 
 def test_create_user_with_invalid_email():
     '''Создание пользователя с почтой, которую использует другой пользователь'''
-    duplicate_user = {
-        'name': 'Duplicate User',
-        'email': 'i.i.ivanov@mail.com'  # Используем существующий email
-    }
-    
-    response = client.post("/users/", json=duplicate_user)
-    # Ожидаем 409 конфликт или 422 валидационная ошибка
-    assert response.status_code in [409, 422, 400]
+    duplicate_user = {'name': 'Duplicate User', 'email': 'i.i.ivanov@mail.com'}
+    response = client.post("/users", json=duplicate_user)
+    assert response.status_code == 409
+    assert 'already exists' in response.json()['detail']
 
 def test_delete_user():
     '''Удаление пользователя'''
-    # Сначала создадим пользователя если endpoint работает
-    test_user = {'name': 'Test Delete', 'email': 'test.delete@mail.com'}
-    create_response = client.post("/users/", json=test_user)
+    # Сначала создаем пользователя для удаления
+    user_to_delete = {'name': 'User to Delete', 'email': 'delete.me@mail.com'}
+    create_response = client.post("/users", json=user_to_delete)
+    assert create_response.status_code == 201
     
-    if create_response.status_code in [200, 201]:
-        # Удаляем пользователя
-        delete_response = client.delete("/users/", params={'email': test_user['email']})
-        # Может возвращать 204, 200 или 404
-        assert delete_response.status_code in [200, 204, 404]
-    else:
-        # Если создание не работает, пропускаем тест
-        print("Create endpoint not working, skipping delete test")
-        assert True  # Пропускаем тест
+    # Удаляем
+    delete_response = client.delete("/users", params={'email': 'delete.me@mail.com'})
+    assert delete_response.status_code == 204
+    
+    # Проверяем что удален
+    get_response = client.get("/users", params={'email': 'delete.me@mail.com'})
+    assert get_response.status_code == 404
